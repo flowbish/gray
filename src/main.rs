@@ -7,19 +7,28 @@ use sdl2::keyboard::{Keycode};
 use sdl2::rect::{Rect};
 use sdl2::surface::{Surface};
 use sdl2::rwops::{RWops};
-use sdl2_image::{ImageRWops, LoadTexture, INIT_PNG, INIT_JPG};
+use sdl2::pixels::{PixelFormatEnum};
+use sdl2_image::{ImageRWops, INIT_PNG, INIT_JPG};
 use std::path::{Path};
+use sdl2::{SdlResult};
+
+fn png_data(path: &str) -> SdlResult<Vec<u8>> {
+    let image_path = Path::new(path);
+    let image_rwops = try!(RWops::from_file(&image_path, "r"));
+    let mut image_surface = try!(image_rwops.load_png());
+    let image_data = image_surface.without_lock_mut().unwrap();
+    Ok(image_data.to_vec())
+}
 
 fn main() {
-    // start sdl2
 
+    // start sdl2
     let ctx = sdl2::init().unwrap();
     let video_ctx = ctx.video().unwrap();
     let _image_context = sdl2_image::init(INIT_PNG | INIT_JPG).unwrap();
     let mut timer = ctx.timer().unwrap();
 
     // Create a window
-
     let mut window = match video_ctx.window("Gaytracer", 400, 400).position_centered()
                                     .opengl().build() {
         Ok(window) => window,
@@ -32,43 +41,16 @@ fn main() {
         Err(err) => panic!("failed to create renderer: {}", err)
     };
 
-    // Set the drawing color to a light blue.
-    let _ = renderer.set_draw_color(sdl2::pixels::Color::RGB(101, 208, 246));
-
-    // Clear the buffer, using the light blue color set above.
-    let _ = renderer.clear();
-
-    // Set the drawing color to a darker blue.
-    let _ = renderer.set_draw_color(sdl2::pixels::Color::RGB(0, 153, 204));
-
-    // Create centered Rect, draw the outline of the Rect in our dark blue color.
-    let border_rect = Rect::new(320-64, 240-64, 128, 128).unwrap().unwrap();
-    let _ = renderer.draw_rect(border_rect);
-
-    // Create a smaller centered Rect, filling it in the same dark blue.
-    let inner_rect = Rect::new(320-60, 240-60, 120, 120).unwrap().unwrap();
-    let _ = renderer.fill_rect(inner_rect);
-
-    // Load image via sdl2-image
-    let my_rwops = RWops::from_file(&Path::new("data/circle.png"), "r").unwrap();
-    let my_surface = my_rwops.load_png().unwrap();
-    let my_texture = renderer.create_texture_from_surface(my_surface).unwrap();
-
-    // Copy texture onto renderer buffer
-    let _ = renderer.copy(&my_texture, None, None);
-
-    // Swap our buffer for the present buffer, displaying it.
-    let _ = renderer.present();
+    let image_edge_path = "data/circle.png";
+    let image_blur_path = "data/circle_blur.png";
 
     {
-        // timer.sleep(3000);
-
         let my_rwops = RWops::from_file(&Path::new("data/circle.png"), "r").unwrap();
         let mut my_surface = my_rwops.load_png().unwrap();
         let width = my_surface.width();
         let height = my_surface.height();
-        let circle = [0; 0];
-        let circle_blur = [0; 0];
+        let circle = png_data(image_edge_path).unwrap();
+        let circle_blur = png_data(image_blur_path).unwrap();
         let mut state = raytrace::RaytraceState::new((width, height), &circle[..], &circle_blur[..]);
         my_surface.with_lock_mut(|data: &mut [u8]| {
             for i in 1..50 {
