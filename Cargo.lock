@@ -2,17 +2,13 @@
 name = "gray"
 version = "0.1.0"
 dependencies = [
- "sdl2 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sdl2 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sdl2_image 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "bitflags"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "lazy_static"
-version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -44,11 +40,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "sdl2"
-version = "0.14.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "bitflags 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "lazy_static 0.1.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "num 0.1.30 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -61,5 +56,16 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "sdl2_image"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "bitflags 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sdl2 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sdl2-sys 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
