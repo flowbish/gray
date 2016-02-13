@@ -1,9 +1,11 @@
 extern crate sdl2;
+extern crate sdl2_image;
 
 use sdl2::event::{Event};
 use sdl2::keyboard::{Keycode};
 use sdl2::rect::{Rect};
 use sdl2::surface::{Surface};
+use sdl2_image::{LoadTexture, INIT_PNG, INIT_JPG};
 use std::path::{Path};
 
 fn main() {
@@ -11,6 +13,7 @@ fn main() {
 
     let ctx = sdl2::init().unwrap();
     let video_ctx = ctx.video().unwrap();
+    let _image_context = sdl2_image::init(INIT_PNG | INIT_JPG).unwrap();
     let mut timer = ctx.timer().unwrap();
 
     // Create a window
@@ -20,9 +23,6 @@ fn main() {
         Ok(window) => window,
         Err(err)   => panic!("failed to create window: {}", err)
     };
-
-    // Load image
-    let img_surface = Surface::load_bmp(&Path::new("circle.bmp")).unwrap();
 
     // Create a rendering context
     let mut renderer = match window.renderer().build() {
@@ -47,10 +47,11 @@ fn main() {
     let inner_rect = Rect::new(320-60, 240-60, 120, 120).unwrap().unwrap();
     let _ = renderer.fill_rect(inner_rect);
 
-    {
-        let mut renderer_surface = renderer.surface_mut().unwrap();
-        renderer_surface.blit(None, img_surface, None);
-    }
+    // Load image via sdl2-image
+    let texture = renderer.load_texture(&Path::new("data/circle.png")).unwrap();
+
+    // Copy texture onto renderer buffer
+    let _ = renderer.copy(&texture, None, None);
 
     // Swap our buffer for the present buffer, displaying it.
     let _ = renderer.present();
