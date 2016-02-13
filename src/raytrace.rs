@@ -35,12 +35,12 @@ fn validate_bounds(point: (i32, i32), size: (u32, u32)) -> Option<(u32, u32)> {
 
 fn write_pixel(data: &mut [u8], size: (u32, u32), index: (u32, u32)) {
     let offset = ((index.1 * size.0 + index.0) * 3) as usize;
-    data[offset + 0] += 1;
-    data[offset + 1] += 1;
-    data[offset + 2] += 1;
+    data[offset + 0] = data[offset + 0].wrapping_add(1);
+    data[offset + 1] = data[offset + 1].wrapping_add(1);
+    data[offset + 2] = data[offset + 2].wrapping_add(1);
 }
 
-fn raytrace(data: &mut [u8], width: u32) {
+pub fn raytrace(data: &mut [u8], width: u32) {
     let height = data.len() as u32 / width;
     let mut pos = PARAMS.origin;
     let dir = {
