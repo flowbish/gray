@@ -1,0 +1,6 @@
+[package]
+name = "gray"
+version = "0.1.0"
+authors = ["Porter Smith <flowbish@gmail.com>"]
+
+[dependencies]
