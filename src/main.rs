@@ -1,6 +1,7 @@
 extern crate sdl2;
 extern crate sdl2_image;
 
+mod raytrace;
 use sdl2::event::{Event};
 use sdl2::keyboard::{Keycode};
 use sdl2::rect::{Rect};
