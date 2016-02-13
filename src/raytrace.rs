@@ -29,7 +29,7 @@ struct RaytraceParams {
 }
 
 const PARAMS: RaytraceParams = RaytraceParams {
-    origin: (10.5, 10.5),
+    origin: (150.5, 150.5),
     iters_per_frame: 1000,
 };
 
@@ -97,11 +97,19 @@ impl<'a> RaytraceState<'a> {
             let theta: Flt = rand::random::<Flt>() * 6.28318530718;
             (theta.cos(), theta.sin())
         };
+        let mut num_refracts = 0;
         let mut old_value = -1.0;
         for _ in 0..1000 {
             let floor_pos = (pos.0.floor() as i32, pos.1.floor() as i32);
             if let Some(ipos) = validate_bounds(floor_pos, self.size) {
-                self.refract(&mut dir, &mut old_value, ipos);
+                if self.refract(&mut dir, &mut old_value, ipos) {
+                    self.put_pixel(ipos, (10.0, -10.0, -10.0), weight);
+                    break;
+                    num_refracts += 1;
+                    if num_refracts >= 2 {
+                        break;
+                    }
+                }
                 let temp = 1.0;
                 self.put_pixel(ipos, (temp, temp, temp), weight);
             } else {
@@ -111,33 +119,38 @@ impl<'a> RaytraceState<'a> {
         }
     }
 
-    fn refract(&self, dir: &mut Flt2, old: &mut Flt, coords: (u32, u32)) {
+    fn refract(&self, dir: &mut Flt2, old: &mut Flt, coords: (u32, u32)) -> bool {
         let new = self.orig_value_at(coords);
         // old >= 0 to not do first iteration
-        if *old >= 0.0 && (new > 0.5) != (*old > 0.5) {
+        let result = if *old >= 0.0 && (new > 0.5) != (*old > 0.5) {
+            let index_variable = 1.25;
             let index_of_refraction = if new > 0.5 {
-                2.0
+                index_variable
             } else {
-                1.0 / 2.0
+                1.0 / index_variable
             };
-            let index_of_refraction2 = index_of_refraction * index_of_refraction;
             let normal = self.normal_at(coords);
             let cos_theta_i = -dot(*dir, normal);
+            let index_of_refraction2 = index_of_refraction * index_of_refraction;
             let sin2_theta_t = index_of_refraction2 * (1.0 - cos_theta_i * cos_theta_i);
             let under_sqrt = 1.0 - sin2_theta_t;
             if under_sqrt < 0.0 {
-                *old = new;
-                *dir = (dir.0 + 2.0 * cos_theta_i * normal.0, dir.0 + 2.0 * cos_theta_i * normal.1);
-                // println!("Refraction fail");
-                return; // TODO
+                *dir = (dir.0 + 2.0 * cos_theta_i * normal.0,
+                        dir.1 + 2.0 * cos_theta_i * normal.1);
+                return true;
             } else {
-                let refract_i = (dir.0 * index_of_refraction2, dir.1 * index_of_refraction2);
-                let normal_mul = index_of_refraction * cos_theta_i + under_sqrt.sqrt();
+                let refract_i = (dir.0 * index_of_refraction, dir.1 * index_of_refraction);
+                let normal_mul = index_of_refraction * cos_theta_i - under_sqrt.sqrt();
                 let refract_n = (normal.0 * normal_mul, normal.1 * normal_mul);
-                *dir = normalize((refract_i.0 + refract_n.0, refract_i.1 + refract_n.1));
+                *dir = (refract_i.0 + refract_n.0, refract_i.1 + refract_n.1);
             }
-        }
+            *dir = normalize(*dir);
+            false
+        } else {
+            false
+        };
         *old = new;
+        result
     }
 
     fn blur_at(&self, coords: (u32, u32)) -> (u8, u8, u8) {
