@@ -6,7 +6,8 @@ use sdl2::event::{Event};
 use sdl2::keyboard::{Keycode};
 use sdl2::rect::{Rect};
 use sdl2::surface::{Surface};
-use sdl2_image::{LoadTexture, INIT_PNG, INIT_JPG};
+use sdl2::rwops::{RWops};
+use sdl2_image::{ImageRWops, LoadTexture, INIT_PNG, INIT_JPG};
 use std::path::{Path};
 
 fn main() {
@@ -19,7 +20,7 @@ fn main() {
 
     // Create a window
 
-    let mut window = match video_ctx.window("Gaytracer", 640, 480).position_centered()
+    let mut window = match video_ctx.window("Gaytracer", 400, 400).position_centered()
                                     .opengl().build() {
         Ok(window) => window,
         Err(err)   => panic!("failed to create window: {}", err)
@@ -49,13 +50,36 @@ fn main() {
     let _ = renderer.fill_rect(inner_rect);
 
     // Load image via sdl2-image
-    let texture = renderer.load_texture(&Path::new("data/circle.png")).unwrap();
+    let my_rwops = RWops::from_file(&Path::new("data/circle.png"), "r").unwrap();
+    let my_surface = my_rwops.load_png().unwrap();
+    let my_texture = renderer.create_texture_from_surface(my_surface).unwrap();
 
     // Copy texture onto renderer buffer
-    let _ = renderer.copy(&texture, None, None);
+    let _ = renderer.copy(&my_texture, None, None);
 
     // Swap our buffer for the present buffer, displaying it.
     let _ = renderer.present();
+
+    {
+        // timer.sleep(3000);
+
+        let my_rwops = RWops::from_file(&Path::new("data/circle.png"), "r").unwrap();
+        let mut my_surface = my_rwops.load_png().unwrap();
+        let width = my_surface.width();
+        let height = my_surface.height();
+        my_surface.with_lock_mut(|data: &mut [u8]| {
+            for i in 1..5000 {
+                raytrace::raytrace(data, width, height);
+            }
+        });
+        let my_texture = renderer.create_texture_from_surface(my_surface).unwrap();
+
+        // Copy texture onto renderer buffer
+        let _ = renderer.copy(&my_texture, None, None);
+
+        // Swap our buffer for the present buffer, displaying it.
+        let _ = renderer.present();
+    }
 
     let mut events = ctx.event_pump().unwrap();
 
