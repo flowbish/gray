@@ -67,9 +67,12 @@ fn main() {
         let mut my_surface = my_rwops.load_png().unwrap();
         let width = my_surface.width();
         let height = my_surface.height();
+        let circle = [0; 0];
+        let circle_blur = [0; 0];
+        let mut state = raytrace::RaytraceState::new((width, height), &circle[..], &circle_blur[..]);
         my_surface.with_lock_mut(|data: &mut [u8]| {
-            for i in 1..5000 {
-                raytrace::raytrace(data, width, height);
+            for i in 1..50 {
+                state.raytrace(data, i);
             }
         });
         let my_texture = renderer.create_texture_from_surface(my_surface).unwrap();
