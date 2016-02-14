@@ -1,10 +1,16 @@
 extern crate rand;
 
+use std::ops::{Add, Sub, Mul, Div, Neg};
 use std::ops::IndexMut;
 use std::cmp::max;
 
 type Flt = f64;
-type Flt2 = (Flt, Flt);
+
+#[derive(Debug, Copy, Clone)]
+struct Flt2 {
+    x: Flt,
+    y: Flt,
+}
 
 pub struct RaytraceState<'a> {
     buffer: Vec<(Flt, Flt, Flt)>,
@@ -12,11 +18,16 @@ pub struct RaytraceState<'a> {
     orig_buf: &'a [u8],
     blur_buf: &'a [u8],
     bytes_per_pixel: usize,
-    origin: Flt2,
+    origin: (Flt, Flt),
+    iters_per_frame: u32,
 }
 
 impl<'a> RaytraceState<'a> {
-    pub fn new(size: (u32, u32), orig_buf: &'a [u8], blur_buf: &'a [u8], origin: (f64, f64)) -> RaytraceState<'a> {
+    pub fn new(size: (u32, u32),
+               orig_buf: &'a [u8],
+               blur_buf: &'a [u8],
+               origin: (f64, f64))
+               -> RaytraceState<'a> {
         RaytraceState {
             buffer: vec![(0.0, 0.0, 0.0); (size.0 * size.1) as usize],
             size: size,
@@ -24,15 +35,108 @@ impl<'a> RaytraceState<'a> {
             blur_buf: blur_buf,
             origin: origin,
             bytes_per_pixel: 4,
+            iters_per_frame: 1000,
         }
     }
 }
 
-struct RaytraceParams {
-    iters_per_frame: u32,
+impl Flt2 {
+    fn new(x: Flt, y: Flt) -> Flt2 {
+        Flt2 { x: x, y: y }
+    }
+
+    fn fract(self) -> Flt2 {
+        Self::new(self.x.fract(), self.y.fract())
+    }
+
+    fn floor(self) -> Flt2 {
+        Self::new(self.x.floor(), self.y.floor())
+    }
+
+    fn floori(self) -> (i32, i32) {
+        let floor = self.floor();
+        (floor.x as i32, floor.y as i32)
+    }
+
+    fn normalized(self) -> Flt2 {
+        self / dot(self, self).sqrt()
+    }
 }
 
-const PARAMS: RaytraceParams = RaytraceParams { iters_per_frame: 1000 };
+impl PartialEq for Flt2 {
+    fn eq(&self, other: &Self) -> bool {
+        self.x == other.x && self.y == other.y
+    }
+}
+
+impl Eq for Flt2 {}
+
+impl Add for Flt2 {
+    type Output = Flt2;
+
+    fn add(self, other: Flt2) -> Flt2 {
+        Flt2::new(self.x + other.x, self.y + other.y)
+    }
+}
+
+impl Sub for Flt2 {
+    type Output = Flt2;
+
+    fn sub(self, other: Flt2) -> Flt2 {
+        Flt2::new(self.x - other.x, self.y - other.y)
+    }
+}
+
+impl Neg for Flt2 {
+    type Output = Flt2;
+
+    fn neg(self) -> Flt2 {
+        Flt2::new(-self.x, -self.y)
+    }
+}
+
+impl Mul<Flt> for Flt2 {
+    type Output = Flt2;
+
+    fn mul(self, other: Flt) -> Flt2 {
+        Flt2::new(self.x * other, self.y * other)
+    }
+}
+
+impl Div for Flt2 {
+    type Output = Flt2;
+
+    fn div(self, other: Flt2) -> Flt2 {
+        Flt2::new(self.x / other.x, self.y / other.y)
+    }
+}
+
+impl Div<Flt> for Flt2 {
+    type Output = Flt2;
+
+    fn div(self, other: Flt) -> Flt2 {
+        Flt2::new(self.x / other, self.y / other)
+    }
+}
+
+#[test]
+fn test_flt2_ops() {
+    fn vecis(v: Flt2, x: Flt, y: Flt) {
+        assert!(v.x == x && v.y == y);
+    }
+    let v11 = Flt2::new(1.0, 1.0);
+    let v15 = Flt2::new(1.0, 5.0);
+    let add = v11 + v15;
+    vecis(add, 2.0, 6.0);
+    let sub = v15 - v11;
+    vecis(sub, 0.0, 4.0);
+    let mul = v15 * 2.0;
+    vecis(mul, 2.0, 10.0);
+    let div = v15 / 2.0;
+    vecis(div, 0.5, 2.5);
+    let div2 = v15 / v11;
+    vecis(div2, 1.0, 5.0);
+}
 
 /// Progresses on to the next pixel along the specified direction.
 fn next_voxel(pos: Flt2, dir: Flt2) -> Flt2 {
@@ -43,15 +147,13 @@ fn next_voxel(pos: Flt2, dir: Flt2) -> Flt2 {
             (2.0 as Flt).sqrt()
         }
     }
-    let pos_frac = (pos.0.fract(), pos.1.fract());
-    let tx1 = (1.0 - pos_frac.0) / dir.0;
-    let tx2 = -pos_frac.0 / dir.0;
-    let ty1 = (1.0 - pos_frac.1) / dir.1;
-    let ty2 = -pos_frac.1 / dir.1;
-    let tx = max_inf(tx1, tx2);
-    let ty = max_inf(ty1, ty2);
+    let pos_frac = pos.fract();
+    let t1 = (Flt2::new(1.0, 1.0) - pos_frac) / dir;
+    let t2 = -pos_frac / dir;
+    let tx = max_inf(t1.x, t2.x);
+    let ty = max_inf(t1.y, t2.y);
     let dist = tx.min(ty) + 0.01;
-    (pos.0 + dir.0 * dist, pos.1 + dir.1 * dist)
+    pos + dir * dist
 }
 
 fn validate_bounds(point: (i32, i32), size: (u32, u32)) -> Option<(u32, u32)> {
@@ -76,18 +178,14 @@ fn hue_to_rgb(hue: Flt) -> (Flt, Flt, Flt) {
     (color.0.sqrt(), color.1.sqrt(), color.2.sqrt())
 }
 
-
-fn normalize(val: Flt2) -> Flt2 {
-    let len = dot(val, val).sqrt();
-    (val.0 / len, val.1 / len)
-}
-
 fn dot(left: Flt2, right: Flt2) -> Flt {
-    left.0 * right.0 + left.1 * right.1
+    left.x * right.x + left.y * right.y
 }
 
 fn buf_to_pix(val: Flt) -> u8 {
+    // gamma correction
     let val = val.powf(1.0 / 2.2);
+    // clamp
     if val >= 1.0 {
         255
     } else if val < 0.0 {
@@ -95,6 +193,49 @@ fn buf_to_pix(val: Flt) -> u8 {
     } else {
         (val * 255.0) as u8
     }
+}
+
+// Calculates new ray direction according to diffuse laws
+fn diffuse_dir(incoming: Flt2, normal: Flt2) -> Flt2 {
+    let result = Flt2::new(rand::random::<Flt>() * 2.0 - 1.0,
+                           rand::random::<Flt>() * 2.0 - 1.0)
+                     .normalized();
+    if (dot(result, normal) < 0.0) != (dot(normal, incoming) < 0.0) {
+        -result
+    } else {
+        result
+    }
+}
+
+// Calculates new ray direction according to reflection laws
+fn reflect_dir(incoming: Flt2, normal: Flt2) -> Flt2 {
+    incoming - normal * (2.0 * dot(incoming, normal))
+}
+
+// Calculates new ray direction according to refraction laws
+fn refract_dir(mut eta: Flt, incoming: Flt2, mut normal: Flt2) -> Option<Flt2> {
+    let mut c1 = -dot(incoming, normal);
+    if c1 < 0.0 {
+        c1 = -c1;
+        normal = -normal;
+        eta = 1.0 / eta;
+    }
+    let cs2 = 1.0 - eta * eta * (1.0 - c1 * c1);
+    if cs2 < 0.0 {
+        None
+    } else {
+        let normal_mul = eta * c1 - cs2.sqrt();
+        let result = incoming * eta + normal * normal_mul;
+        Some(result)
+    }
+}
+
+#[test]
+fn test_refract() {
+    assert_eq!(refract_dir(2.0, Flt2::new(1.0, 0.0), Flt2::new(-1.0, 0.0)).unwrap(),
+               Flt2::new(1.0, 0.0));
+    assert_eq!(refract_dir(2.0, Flt2::new(0.0, 1.0), Flt2::new(0.0, 1.0)).unwrap(),
+               Flt2::new(0.0, 1.0));
 }
 
 impl<'a> RaytraceState<'a> {
@@ -108,10 +249,10 @@ impl<'a> RaytraceState<'a> {
         let mulby = (frame - 1) as Flt / (frame as Flt);
         self.mul(mulby);
         let multiplier = 100.0;
-        let weight = multiplier / ((PARAMS.iters_per_frame * frame) as Flt);
+        let weight = multiplier / ((self.iters_per_frame * frame) as Flt);
 
         // Cast out a bunch of rays!
-        for _ in 0..PARAMS.iters_per_frame {
+        for _ in 0..self.iters_per_frame {
             self.raytrace_single(weight);
         }
 
@@ -130,10 +271,10 @@ impl<'a> RaytraceState<'a> {
     /// left by other rays.
     fn raytrace_single(&mut self, weight: Flt) {
         // Start at origin with a random starting direction
-        let mut pos = self.origin;
+        let mut pos = Flt2::new(self.origin.0, self.origin.1);
         let mut dir = {
             let theta: Flt = rand::random::<Flt>() * 6.28318530718;
-            (theta.cos(), theta.sin())
+            Flt2::new(theta.cos(), theta.sin())
         };
 
         // Choose a random color for the current ray
@@ -142,12 +283,11 @@ impl<'a> RaytraceState<'a> {
 
         // Keep track of the number of refractions this ray has had
         let mut num_refracts = 0;
-        let mut old_value = -1.0;
+        let mut old_value = -1.0; // sentinel value detected in refract for first iteration
         let mut max_iters = self.max_ray_length();
 
         // Keep following this ray until we end out of bounds
-        while let Some(ipos) = validate_bounds((pos.0.floor() as i32, pos.1.floor() as i32),
-                                               self.size) {
+        while let Some(ipos) = validate_bounds(pos.floori(), self.size) {
             if max_iters == 0 {
                 break;
             }
@@ -155,8 +295,13 @@ impl<'a> RaytraceState<'a> {
             if num_refracts != 0 {
                 num_refracts -= 1;
             } else {
-                if self.refract(&mut dir, &mut old_value, ipos, hue) {
-                    num_refracts = 3;
+                match self.refract(&mut dir, &mut old_value, ipos, hue) {
+                    Some(true) => num_refracts = 0,
+                    Some(false) => (),
+                    None => {
+                        self.put_pixel(ipos, (10.0, -10.0, -10.0), 1.0);
+                        break;
+                    }
                 }
             }
             self.put_pixel(ipos, rgb, weight);
@@ -166,39 +311,36 @@ impl<'a> RaytraceState<'a> {
 
     /// Bend a beam of light as it crosses the boundary between two materials, the
     /// intensity depending on the wavelength (color) of the ray.
-    fn refract(&self, dir: &mut Flt2, old: &mut Flt, coords: (u32, u32), hue: Flt) -> bool {
+    fn refract(&self, dir: &mut Flt2, old: &mut Flt, coords: (u32, u32), hue: Flt) -> Option<bool> {
         // Implemented based on the following papers
         // http://steve.hollasch.net/cgindex/render/refraction.txt
         // http://graphics.stanford.edu/courses/cs148-10-summer/docs/2006--degreve--reflection_refraction.pdf
         let new = self.orig_value_at(coords);
-        if !dir.0.is_finite() {
+        if !dir.x.is_finite() {
             panic!("non-finite dir");
         }
         // old >= 0 to not do first iteration
         let result = if *old >= 0.0 && (new > 0.5) != (*old > 0.5) {
-            let eta = 1.1 + hue * 0.2;
-            let normal = self.normal_at(coords);
-            if !normal.0.is_finite() {
-                *old = new;
-                return false;
-            }
-            let c1 = -dot(*dir, normal);
-            let under_sqrt = 1.0 - eta * eta * (1.0 - c1 * c1);
-            *dir = if under_sqrt < 0.0 {
-                (dir.0 + 2.0 * c1 * normal.0, dir.1 + 2.0 * c1 * normal.1)
+            let eta = 1.3 + hue * 0.2;
+            if let Some(normal) = self.normal_at(coords) {
+                let rand_bounce = rand::random::<Flt>();
+                let thresh_diffuse = 0.75;
+                *dir = if new < 0.5 && rand_bounce > thresh_diffuse {
+                    diffuse_dir(*dir, normal)
+                } else {
+                    refract_dir(eta, *dir, normal).unwrap_or(reflect_dir(*dir, normal))
+                };
+                *dir = dir.normalized();
             } else {
-                let normal_mul = eta * c1 - under_sqrt.sqrt();
-                let refract_i = (dir.0 * eta, dir.1 * eta);
-                let refract_n = (normal.0 * normal_mul, normal.1 * normal_mul);
-                (refract_i.0 + refract_n.0, refract_i.1 + refract_n.1)
-            };
-            *dir = normalize(*dir);
+                *old = new;
+                return None;
+            }
             true
         } else {
             false
         };
         *old = new;
-        result
+        Some(result)
     }
 
     fn blur_at(&self, coords: (u32, u32)) -> (u8, u8, u8) {
@@ -232,7 +374,7 @@ impl<'a> RaytraceState<'a> {
 
     /// Calculate the normal at the specified coordinate, using the blur mapped
     /// image.
-    fn normal_at(&self, coords: (u32, u32)) -> Flt2 {
+    fn normal_at(&self, coords: (u32, u32)) -> Option<Flt2> {
         let left = if coords.0 == 0 {
             0
         } else {
@@ -255,13 +397,21 @@ impl<'a> RaytraceState<'a> {
         };
         // Grab a diagonal of values from the current poing
         let c00 = self.blur_value_at((left, up));
-        let c01 = self.blur_value_at((left, down));
-        let c10 = self.blur_value_at((right, up));
-        let c11 = self.blur_value_at((right, down));
-        // Calculate a (very approximate) gradient
-        let x = (c10 - c00) + (c11 - c01);
-        let y = (c01 - c00) + (c11 - c10);
-        normalize((x, y))
+        let c01 = self.blur_value_at((left, coords.1));
+        let c02 = self.blur_value_at((left, down));
+        let c10 = self.blur_value_at((coords.0, up));
+        let c12 = self.blur_value_at((coords.0, down));
+        let c20 = self.blur_value_at((right, up));
+        let c21 = self.blur_value_at((right, coords.1));
+        let c22 = self.blur_value_at((right, down));
+        // Calculate a (very approximate) gradient using Sobel filter
+        let x = (c20 + 2.0 * c21 + c22) - (c00 + 2.0 * c01 + c02);
+        let y = (c02 + 2.0 * c12 + c22) - (c00 + 2.0 * c10 + c20);
+        if x == 0.0 && y == 0.0 {
+            None
+        } else {
+            Some(Flt2::new(x, y).normalized())
+        }
     }
 
     /// Push a value to the specified pixel coordinate, taking into account the
