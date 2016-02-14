@@ -11,6 +11,8 @@ pub struct RaytraceState<'a> {
     size: (u32, u32),
     orig_buf: &'a [u8],
     blur_buf: &'a [u8],
+    bits_per_pixel: usize,
+    origin: Flt2,
 }
 
 impl<'a> RaytraceState<'a> {
@@ -20,19 +22,17 @@ impl<'a> RaytraceState<'a> {
             size: size,
             orig_buf: orig_buf,
             blur_buf: blur_buf,
+            origin: (150.5, 300.5),
+            bits_per_pixel: 4,
         }
     }
 }
 
 struct RaytraceParams {
-    origin: Flt2,
     iters_per_frame: u32,
 }
 
-const PARAMS: RaytraceParams = RaytraceParams {
-    origin: (150.5, 150.5),
-    iters_per_frame: 1000,
-};
+const PARAMS: RaytraceParams = RaytraceParams { iters_per_frame: 1000 };
 
 fn next_voxel(pos: Flt2, dir: Flt2) -> Flt2 {
     fn max_inf(x: Flt, y: Flt) -> Flt {
@@ -61,8 +61,21 @@ fn validate_bounds(point: (i32, i32), size: (u32, u32)) -> Option<(u32, u32)> {
     }
 }
 
+fn hue_to_rgb(hue: Flt) -> (Flt, Flt, Flt) {
+    let hue3 = hue * 3.0;
+    let fract = hue3.fract();
+    let color = match hue3 as i32 {
+        0 => (fract, 0.0, 1.0 - fract),
+        1 => (1.0 - fract, fract, 0.0),
+        2 => (0.0, 1.0 - fract, fract),
+        _ => panic!("Invalid hue {}", hue),
+    };
+    (color.0.sqrt(), color.1.sqrt(), color.2.sqrt())
+}
+
+
 fn normalize(val: Flt2) -> Flt2 {
-    let len = (val.0 * val.0 * val.1 * val.1).sqrt();
+    let len = dot(val, val).sqrt();
     (val.0 / len, val.1 / len)
 }
 
@@ -71,6 +84,7 @@ fn dot(left: Flt2, right: Flt2) -> Flt {
 }
 
 fn buf_to_pix(val: Flt) -> u8 {
+    let val = val.powf(1.0 / 2.2);
     if val >= 1.0 {
         255
     } else if val < 0.0 {
@@ -82,13 +96,15 @@ fn buf_to_pix(val: Flt) -> u8 {
 
 impl<'a> RaytraceState<'a> {
     pub fn raytrace(&mut self, data: &mut [u8], frame: u32) {
-        let fixed_frame = frame * PARAMS.iters_per_frame;
-        let weight = PARAMS.iters_per_frame as Flt / fixed_frame as Flt;
+        // (x + o * frame) / (1 + frame)
+        // x / (1 + frame) + o * frame / (1 + frame);
+        let mulby = (frame - 1) as Flt / (frame as Flt);
+        self.mul(mulby);
+        let multiplier = 100.0;
+        let weight = multiplier / ((PARAMS.iters_per_frame * frame) as Flt);
         for _ in 0..PARAMS.iters_per_frame {
             self.raytrace_single(weight);
         }
-        let mulby = 1.0 - weight;
-        self.mul(mulby);
         self.blit(data);
     }
 
@@ -97,52 +113,57 @@ impl<'a> RaytraceState<'a> {
     }
 
     fn raytrace_single(&mut self, weight: Flt) {
-        let mut pos = PARAMS.origin;
+        let mut pos = self.origin;
         let mut dir = {
             let theta: Flt = rand::random::<Flt>() * 6.28318530718;
             (theta.cos(), theta.sin())
         };
+        let hue = rand::random::<Flt>();
+        let rgb = hue_to_rgb(hue);
         let mut num_refracts = 0;
         let mut old_value = -1.0;
-        for _ in 0..self.max_ray_length() {
-            let floor_pos = (pos.0.floor() as i32, pos.1.floor() as i32);
-            if let Some(ipos) = validate_bounds(floor_pos, self.size) {
-                if self.refract(&mut dir, &mut old_value, ipos) {
-                    self.put_pixel(ipos, (10.0, -10.0, -10.0), weight);
-                    break;
-                    num_refracts += 1;
-                    if num_refracts >= 2 {
-                        break;
-                    }
-                }
-                let temp = 1.0;
-                self.put_pixel(ipos, (temp, temp, temp), weight);
-            } else {
+        let mut max_iters = self.max_ray_length();
+        while let Some(ipos) = validate_bounds((pos.0.floor() as i32, pos.1.floor() as i32),
+                                               self.size) {
+            if max_iters == 0 {
                 break;
             }
+            max_iters -= 1;
+            if num_refracts != 0 {
+                num_refracts -= 1;
+            } else {
+                if self.refract(&mut dir, &mut old_value, ipos, hue) {
+                    num_refracts = 3;
+                }
+            }
+            self.put_pixel(ipos, rgb, weight);
             pos = next_voxel(pos, dir);
         }
     }
 
-    fn refract(&self, dir: &mut Flt2, old: &mut Flt, coords: (u32, u32)) -> bool {
+    fn refract(&self, dir: &mut Flt2, old: &mut Flt, coords: (u32, u32), hue: Flt) -> bool {
         let new = self.orig_value_at(coords);
         // old >= 0 to not do first iteration
         let result = if *old >= 0.0 && (new > 0.5) != (*old > 0.5) {
-            let index_variable = 1.25;
+            let index_variable = 1.2 + hue * 0.5;
             let index_of_refraction = if new > 0.5 {
-                index_variable
-            } else {
                 1.0 / index_variable
+            } else {
+                index_variable
             };
             let normal = self.normal_at(coords);
-            let cos_theta_i = -dot(*dir, normal);
+            let cos_theta_i = dot(*dir, normal);
+            let (normal, cos_theta_i) = if cos_theta_i > 0.0 {
+                (normal, cos_theta_i)
+            } else {
+                ((-normal.0, -normal.1), -cos_theta_i)
+            };
             let index_of_refraction2 = index_of_refraction * index_of_refraction;
             let sin2_theta_t = index_of_refraction2 * (1.0 - cos_theta_i * cos_theta_i);
             let under_sqrt = 1.0 - sin2_theta_t;
             if under_sqrt < 0.0 {
                 *dir = (dir.0 + 2.0 * cos_theta_i * normal.0,
                         dir.1 + 2.0 * cos_theta_i * normal.1);
-                return true;
             } else {
                 let refract_i = (dir.0 * index_of_refraction, dir.1 * index_of_refraction);
                 let normal_mul = index_of_refraction * cos_theta_i - under_sqrt.sqrt();
@@ -150,7 +171,7 @@ impl<'a> RaytraceState<'a> {
                 *dir = (refract_i.0 + refract_n.0, refract_i.1 + refract_n.1);
             }
             *dir = normalize(*dir);
-            false
+            true
         } else {
             false
         };
@@ -160,9 +181,9 @@ impl<'a> RaytraceState<'a> {
 
     fn blur_at(&self, coords: (u32, u32)) -> (u8, u8, u8) {
         let idx = (coords.1 * self.size.0 + coords.0) as usize;
-        let red = self.blur_buf[idx * 4 + 0];
-        let green = self.blur_buf[idx * 4 + 1];
-        let blue = self.blur_buf[idx * 4 + 2];
+        let red = self.blur_buf[idx * self.bits_per_pixel + 0];
+        let green = self.blur_buf[idx * self.bits_per_pixel + 1];
+        let blue = self.blur_buf[idx * self.bits_per_pixel + 2];
         return (red, green, blue);
     }
 
@@ -173,9 +194,9 @@ impl<'a> RaytraceState<'a> {
 
     fn orig_at(&self, coords: (u32, u32)) -> (u8, u8, u8) {
         let idx = (coords.1 * self.size.0 + coords.0) as usize;
-        let red = self.orig_buf[idx * 4 + 0];
-        let green = self.orig_buf[idx * 4 + 1];
-        let blue = self.orig_buf[idx * 4 + 2];
+        let red = self.orig_buf[idx * self.bits_per_pixel + 0];
+        let green = self.orig_buf[idx * self.bits_per_pixel + 1];
+        let blue = self.orig_buf[idx * self.bits_per_pixel + 2];
         return (red, green, blue);
     }
 
@@ -185,10 +206,30 @@ impl<'a> RaytraceState<'a> {
     }
 
     fn normal_at(&self, coords: (u32, u32)) -> Flt2 {
-        let c00 = self.blur_value_at((coords.0 - 1, coords.1 - 1));
-        let c01 = self.blur_value_at((coords.0 - 1, coords.1 + 1));
-        let c10 = self.blur_value_at((coords.0 + 1, coords.1 - 1));
-        let c11 = self.blur_value_at((coords.0 + 1, coords.1 + 1));
+        let left = if coords.0 == 0 {
+            0
+        } else {
+            coords.0 - 1
+        };
+        let right = if coords.0 == self.size.0 - 1 {
+            self.size.0 - 1
+        } else {
+            coords.0 + 1
+        };
+        let up = if coords.1 == 0 {
+            0
+        } else {
+            coords.1 - 1
+        };
+        let down = if coords.1 == self.size.1 - 1 {
+            self.size.1 - 1
+        } else {
+            coords.1 + 1
+        };
+        let c00 = self.blur_value_at((left, up));
+        let c01 = self.blur_value_at((left, down));
+        let c10 = self.blur_value_at((right, up));
+        let c11 = self.blur_value_at((right, down));
         let x = (c10 - c00) + (c11 - c10);
         let y = (c01 - c00) + (c11 - c01);
         normalize((x, y))
@@ -197,9 +238,9 @@ impl<'a> RaytraceState<'a> {
     fn put_pixel(&mut self, coords: (u32, u32), value: (Flt, Flt, Flt), weight: Flt) {
         let index = coords.1 * self.size.0 + coords.0;
         let arr = self.buffer.index_mut(index as usize);
-        arr.0 = arr.0 * (1.0 - weight) + value.0 * weight;
-        arr.1 = arr.1 * (1.0 - weight) + value.1 * weight;
-        arr.2 = arr.2 * (1.0 - weight) + value.2 * weight;
+        arr.0 = arr.0 + value.0 * weight;
+        arr.1 = arr.1 + value.1 * weight;
+        arr.2 = arr.2 + value.2 * weight;
     }
 
     fn mul(&mut self, value: Flt) {
