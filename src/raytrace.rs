@@ -11,7 +11,7 @@ pub struct RaytraceState<'a> {
     size: (u32, u32),
     orig_buf: &'a [u8],
     blur_buf: &'a [u8],
-    bits_per_pixel: usize,
+    bytes_per_pixel: usize,
     origin: Flt2,
 }
 
@@ -22,8 +22,8 @@ impl<'a> RaytraceState<'a> {
             size: size,
             orig_buf: orig_buf,
             blur_buf: blur_buf,
-            origin: (150.5, 300.5),
-            bits_per_pixel: 4,
+            origin: (10.5, 10.5),
+            bytes_per_pixel: 4,
         }
     }
 }
@@ -142,34 +142,30 @@ impl<'a> RaytraceState<'a> {
     }
 
     fn refract(&self, dir: &mut Flt2, old: &mut Flt, coords: (u32, u32), hue: Flt) -> bool {
+        // http://steve.hollasch.net/cgindex/render/refraction.txt
+        // http://graphics.stanford.edu/courses/cs148-10-summer/docs/2006--degreve--reflection_refraction.pdf
         let new = self.orig_value_at(coords);
+        if !dir.0.is_finite() {
+            panic!("non-finite dir");
+        }
         // old >= 0 to not do first iteration
         let result = if *old >= 0.0 && (new > 0.5) != (*old > 0.5) {
-            let index_variable = 1.2 + hue * 0.5;
-            let index_of_refraction = if new > 0.5 {
-                1.0 / index_variable
-            } else {
-                index_variable
-            };
+            let eta = 1.1 + hue * 0.2;
             let normal = self.normal_at(coords);
-            let cos_theta_i = dot(*dir, normal);
-            let (normal, cos_theta_i) = if cos_theta_i > 0.0 {
-                (normal, cos_theta_i)
-            } else {
-                ((-normal.0, -normal.1), -cos_theta_i)
-            };
-            let index_of_refraction2 = index_of_refraction * index_of_refraction;
-            let sin2_theta_t = index_of_refraction2 * (1.0 - cos_theta_i * cos_theta_i);
-            let under_sqrt = 1.0 - sin2_theta_t;
-            if under_sqrt < 0.0 {
-                *dir = (dir.0 + 2.0 * cos_theta_i * normal.0,
-                        dir.1 + 2.0 * cos_theta_i * normal.1);
-            } else {
-                let refract_i = (dir.0 * index_of_refraction, dir.1 * index_of_refraction);
-                let normal_mul = index_of_refraction * cos_theta_i - under_sqrt.sqrt();
-                let refract_n = (normal.0 * normal_mul, normal.1 * normal_mul);
-                *dir = (refract_i.0 + refract_n.0, refract_i.1 + refract_n.1);
+            if !normal.0.is_finite() {
+                *old = new;
+                return false;
             }
+            let c1 = -dot(*dir, normal);
+            let under_sqrt = 1.0 - eta * eta * (1.0 - c1 * c1);
+            *dir = if under_sqrt < 0.0 {
+                (dir.0 + 2.0 * c1 * normal.0, dir.1 + 2.0 * c1 * normal.1)
+            } else {
+                let normal_mul = eta * c1 - under_sqrt.sqrt();
+                let refract_i = (dir.0 * eta, dir.1 * eta);
+                let refract_n = (normal.0 * normal_mul, normal.1 * normal_mul);
+                (refract_i.0 + refract_n.0, refract_i.1 + refract_n.1)
+            };
             *dir = normalize(*dir);
             true
         } else {
@@ -181,9 +177,9 @@ impl<'a> RaytraceState<'a> {
 
     fn blur_at(&self, coords: (u32, u32)) -> (u8, u8, u8) {
         let idx = (coords.1 * self.size.0 + coords.0) as usize;
-        let red = self.blur_buf[idx * self.bits_per_pixel + 0];
-        let green = self.blur_buf[idx * self.bits_per_pixel + 1];
-        let blue = self.blur_buf[idx * self.bits_per_pixel + 2];
+        let red = self.blur_buf[idx * self.bytes_per_pixel + 0];
+        let green = self.blur_buf[idx * self.bytes_per_pixel + 1];
+        let blue = self.blur_buf[idx * self.bytes_per_pixel + 2];
         return (red, green, blue);
     }
 
@@ -194,9 +190,9 @@ impl<'a> RaytraceState<'a> {
 
     fn orig_at(&self, coords: (u32, u32)) -> (u8, u8, u8) {
         let idx = (coords.1 * self.size.0 + coords.0) as usize;
-        let red = self.orig_buf[idx * self.bits_per_pixel + 0];
-        let green = self.orig_buf[idx * self.bits_per_pixel + 1];
-        let blue = self.orig_buf[idx * self.bits_per_pixel + 2];
+        let red = self.orig_buf[idx * self.bytes_per_pixel + 0];
+        let green = self.orig_buf[idx * self.bytes_per_pixel + 1];
+        let blue = self.orig_buf[idx * self.bytes_per_pixel + 2];
         return (red, green, blue);
     }
 
@@ -230,8 +226,8 @@ impl<'a> RaytraceState<'a> {
         let c01 = self.blur_value_at((left, down));
         let c10 = self.blur_value_at((right, up));
         let c11 = self.blur_value_at((right, down));
-        let x = (c10 - c00) + (c11 - c10);
-        let y = (c01 - c00) + (c11 - c01);
+        let x = (c10 - c00) + (c11 - c01);
+        let y = (c01 - c00) + (c11 - c10);
         normalize((x, y))
     }
 
