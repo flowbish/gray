@@ -42,21 +42,26 @@ fn main() {
     // Load in image files
     let ((width, height), edge_data) = match png_data(image_edge_path) {
         Ok(vals) => vals,
-        Err(msg) => panic!("Failed to load image '{}'", image_edge_path)
+        Err(_) => { println!("Failed to load image '{}'.", image_edge_path); return; }
     };
-    let ((width, height), blur_data) = match png_data(image_blur_path) {
+    let ((width_, height_), blur_data) = match png_data(image_blur_path) {
         Ok(vals) => vals,
-        Err(msg) => panic!("Failed to load image '{}'", image_blur_path)
+        Err(_) => { println!("Failed to load image '{}'.", image_blur_path); return; }
     };
+
+    // Assert images are same dimensions
+    if width != width_ || height != height_ {
+        println!("Images must be the same dimensions.");
+        return;
+    }
 
     // Start SDL2
     let ctx = sdl2::init().unwrap();
     let video_ctx = ctx.video().unwrap();
     let _image_context = sdl2_image::init(INIT_PNG | INIT_JPG).unwrap();
-    let mut timer = ctx.timer().unwrap();
 
     // Create a window
-    let mut window = match video_ctx.window("Gaytracer", width, height).position_centered()
+    let window = match video_ctx.window("Gaytracer", width, height).position_centered()
                                     .opengl().build() {
         Ok(window) => window,
         Err(err)   => panic!("Failed to create window: {}", err)
@@ -102,9 +107,9 @@ fn main() {
 
         // Copy texture onto renderer buffer
         let my_texture = renderer.create_texture_from_surface(&my_surface).unwrap();
-        let _ = renderer.copy(&my_texture, None, None);
+        renderer.copy(&my_texture, None, None);
 
         // Swap our buffer for the present buffer, displaying it.
-        let _ = renderer.present();
+        renderer.present();
     }
 }
