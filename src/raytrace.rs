@@ -16,13 +16,13 @@ pub struct RaytraceState<'a> {
 }
 
 impl<'a> RaytraceState<'a> {
-    pub fn new(size: (u32, u32), orig_buf: &'a [u8], blur_buf: &'a [u8]) -> RaytraceState<'a> {
+    pub fn new(size: (u32, u32), orig_buf: &'a [u8], blur_buf: &'a [u8], origin: (f64, f64)) -> RaytraceState<'a> {
         RaytraceState {
             buffer: vec![(0.0, 0.0, 0.0); (size.0 * size.1) as usize],
             size: size,
             orig_buf: orig_buf,
             blur_buf: blur_buf,
-            origin: (10.5, 10.5),
+            origin: origin,
             bytes_per_pixel: 4,
         }
     }
@@ -34,6 +34,7 @@ struct RaytraceParams {
 
 const PARAMS: RaytraceParams = RaytraceParams { iters_per_frame: 1000 };
 
+/// Progresses on to the next pixel along the specified direction.
 fn next_voxel(pos: Flt2, dir: Flt2) -> Flt2 {
     fn max_inf(x: Flt, y: Flt) -> Flt {
         if x.is_finite() && y.is_finite() {
@@ -61,6 +62,8 @@ fn validate_bounds(point: (i32, i32), size: (u32, u32)) -> Option<(u32, u32)> {
     }
 }
 
+/// Convert from a hue (0-1) to a an RGB triplet
+/// Colors are maximum saturation.
 fn hue_to_rgb(hue: Flt) -> (Flt, Flt, Flt) {
     let hue3 = hue * 3.0;
     let fract = hue3.fract();
@@ -95,34 +98,54 @@ fn buf_to_pix(val: Flt) -> u8 {
 }
 
 impl<'a> RaytraceState<'a> {
+    /// Raytrace multiple rays originating from the origin
     pub fn raytrace(&mut self, data: &mut [u8], frame: u32) {
         // (x + o * frame) / (1 + frame)
         // x / (1 + frame) + o * frame / (1 + frame);
+
+        // Take into account weighting of previous frames when adding current
+        // frame.
         let mulby = (frame - 1) as Flt / (frame as Flt);
         self.mul(mulby);
         let multiplier = 100.0;
         let weight = multiplier / ((PARAMS.iters_per_frame * frame) as Flt);
+
+        // Cast out a bunch of rays!
         for _ in 0..PARAMS.iters_per_frame {
             self.raytrace_single(weight);
         }
+
+        // Write pixel data back into shared buffer.
         self.blit(data);
     }
 
+    /// Maximum length of a ray, as a function of the size of the image. This
+    /// keeps a ray from reflecting around inside of an object infinitely.
     fn max_ray_length(&self) -> u32 {
         2 * max(self.size.0, self.size.1)
     }
 
+    /// Trace out a single ray in the environment. The ray is cast, leaving
+    /// behind a trail of colored light which is then averaged with the paths
+    /// left by other rays.
     fn raytrace_single(&mut self, weight: Flt) {
+        // Start at origin with a random starting direction
         let mut pos = self.origin;
         let mut dir = {
             let theta: Flt = rand::random::<Flt>() * 6.28318530718;
             (theta.cos(), theta.sin())
         };
+
+        // Choose a random color for the current ray
         let hue = rand::random::<Flt>();
         let rgb = hue_to_rgb(hue);
+
+        // Keep track of the number of refractions this ray has had
         let mut num_refracts = 0;
         let mut old_value = -1.0;
         let mut max_iters = self.max_ray_length();
+
+        // Keep following this ray until we end out of bounds
         while let Some(ipos) = validate_bounds((pos.0.floor() as i32, pos.1.floor() as i32),
                                                self.size) {
             if max_iters == 0 {
@@ -141,7 +164,10 @@ impl<'a> RaytraceState<'a> {
         }
     }
 
+    /// Bend a beam of light as it crosses the boundary between two materials, the
+    /// intensity depending on the wavelength (color) of the ray.
     fn refract(&self, dir: &mut Flt2, old: &mut Flt, coords: (u32, u32), hue: Flt) -> bool {
+        // Implemented based on the following papers
         // http://steve.hollasch.net/cgindex/render/refraction.txt
         // http://graphics.stanford.edu/courses/cs148-10-summer/docs/2006--degreve--reflection_refraction.pdf
         let new = self.orig_value_at(coords);
@@ -188,6 +214,7 @@ impl<'a> RaytraceState<'a> {
         return (blur.0 as Flt + blur.1 as Flt + blur.2 as Flt) / (255.0 * 3.0);
     }
 
+    /// Returns the RGB pixel values of the specified coordinate.
     fn orig_at(&self, coords: (u32, u32)) -> (u8, u8, u8) {
         let idx = (coords.1 * self.size.0 + coords.0) as usize;
         let red = self.orig_buf[idx * self.bytes_per_pixel + 0];
@@ -196,11 +223,15 @@ impl<'a> RaytraceState<'a> {
         return (red, green, blue);
     }
 
+    /// Calculate the value of the original image at the specified coordinate.
+    /// This uses a standard average of the RGB values.
     fn orig_value_at(&self, coords: (u32, u32)) -> Flt {
         let orig = self.orig_at(coords);
         return (orig.0 as Flt + orig.1 as Flt + orig.2 as Flt) / (255.0 * 3.0);
     }
 
+    /// Calculate the normal at the specified coordinate, using the blur mapped
+    /// image.
     fn normal_at(&self, coords: (u32, u32)) -> Flt2 {
         let left = if coords.0 == 0 {
             0
@@ -222,15 +253,19 @@ impl<'a> RaytraceState<'a> {
         } else {
             coords.1 + 1
         };
+        // Grab a diagonal of values from the current poing
         let c00 = self.blur_value_at((left, up));
         let c01 = self.blur_value_at((left, down));
         let c10 = self.blur_value_at((right, up));
         let c11 = self.blur_value_at((right, down));
+        // Calculate a (very approximate) gradient
         let x = (c10 - c00) + (c11 - c01);
         let y = (c01 - c00) + (c11 - c10);
         normalize((x, y))
     }
 
+    /// Push a value to the specified pixel coordinate, taking into account the
+    /// weight of the previous values pushed.
     fn put_pixel(&mut self, coords: (u32, u32), value: (Flt, Flt, Flt), weight: Flt) {
         let index = coords.1 * self.size.0 + coords.0;
         let arr = self.buffer.index_mut(index as usize);
@@ -247,6 +282,7 @@ impl<'a> RaytraceState<'a> {
         }
     }
 
+    /// Write pixel data to buffer
     fn blit(&self, data: &mut [u8]) {
         for (i, v) in self.buffer.iter().enumerate() {
             data[i * 4 + 0] = buf_to_pix(v.0);

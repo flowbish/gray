@@ -1,5 +1,6 @@
 extern crate sdl2;
 extern crate sdl2_image;
+extern crate image;
 
 mod raytrace;
 use std::env;
@@ -8,58 +9,53 @@ use sdl2::keyboard::Keycode;
 use sdl2::surface::Surface;
 use sdl2::rwops::RWops;
 use sdl2::pixels::PixelFormatEnum;
-use sdl2_image::{ImageRWops, INIT_PNG, INIT_JPG};
-use std::path::Path;
 use sdl2::SdlResult;
+use sdl2_image::{ImageRWops, INIT_PNG, INIT_JPG};
+use image::{Pixel, ImageBuffer, Rgba, RgbaImage, RgbImage, imageops};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::sync::mpsc;
+
+/// Load in a buffer of pixel data from a png file and run a Gaussian filter
+fn blur_data(image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> Vec<u8> {
+    let image_copy = image.clone();
+    imageops::blur(&image_copy, 4.0);
+    image_copy.into_vec()
+}
 
 /// Load in a buffer of pixel data from a png file
-fn png_data(path: &str) -> SdlResult<((u32, u32), Vec<u8>)> {
-    let image_path = Path::new(path);
-    let image_rwops = try!(RWops::from_file(&image_path, "r"));
-    let mut image_surface = try!(image_rwops.load_png());
-    let height = image_surface.height();
-    let width = image_surface.width();
-    let image_data = image_surface.without_lock_mut().unwrap();
-    Ok(((width, height), image_data.to_vec()))
+fn png_data(image: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> Vec<u8> {
+    image.clone().into_vec()
 }
 
 fn print_usage(program_name: &str) {
-    println!("Usage:\n\t{} input blur", program_name);
+    println!("Usage:\n\t{} image", program_name);
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 3 || args.len() > 3 {
+    if args.len() < 2 || args.len() > 2 {
         print_usage(&args[0]);
         return;
     }
 
     // Paths to load the edge and blurred data from
-    let image_edge_path = &args[1];
-    let image_blur_path = &args[2];
-
-    // Load in image files
-    let ((width, height), edge_data) = match png_data(image_edge_path) {
-        Ok(vals) => vals,
+    let image_path = Path::new(&args[1]);
+    let img = match image::open(image_path) {
+        Ok(image) => image,
         Err(_) => {
-            println!("Failed to load image '{}'.", image_edge_path);
-            return;
-        }
-    };
-    let ((width_, height_), blur_data) = match png_data(image_blur_path) {
-        Ok(vals) => vals,
-        Err(_) => {
-            println!("Failed to load image '{}'.", image_blur_path);
+            println!("Failed to load image '{}'", image_path.to_str().unwrap());
             return;
         }
     };
 
-    // Assert images are same dimensions
-    if width != width_ || height != height_ {
-        println!("Images must be the same dimensions.");
-        return;
-    }
+    // Load image data and apply blur filter
+    let imgrgba8 = img.to_rgba();
+    let (width, height) = imgrgba8.dimensions();
+    let image_data = png_data(&imgrgba8);
+    let blur_data = blur_data(&imgrgba8);
 
     // Start SDL2
     let ctx = sdl2::init().unwrap();
@@ -67,7 +63,7 @@ fn main() {
     let _image_context = sdl2_image::init(INIT_PNG | INIT_JPG).unwrap();
 
     // Create a window
-    let window = match video_ctx.window("Gaytracer", width, height)
+    let window = match video_ctx.window("Graytracer", width, height)
                                 .position_centered()
                                 .opengl()
                                 .build() {
@@ -85,11 +81,11 @@ fn main() {
     let mut my_surface = Surface::new(width, height, PixelFormatEnum::ARGB8888).unwrap();
 
     // Create a raytracing state and run it a couple times
-    let mut state = raytrace::RaytraceState::new((width, height), &edge_data[..], &blur_data[..]);
+    let mut state = raytrace::RaytraceState::new((width, height), &image_data[..], &blur_data[..], (350.0, 350.0));
 
     let mut events = ctx.event_pump().unwrap();
 
-    // Loop variables, maximum number of raytracing iterations
+    // Current frame rendered
     let mut iter = 1;
 
     // loop until we receive a QuitEvent or escape key pressed
@@ -97,9 +93,10 @@ fn main() {
         // poll_event returns the most recent event or NoEvent if nothing has happened
         for event in events.poll_iter() {
             match event {
-                Event::Quit{..} => break 'event,
-                Event::KeyDown{keycode: Option::Some(Keycode::Escape), ..} => break 'event,
-                _ => continue,
+                Event::Quit{..} |
+                Event::KeyDown{keycode: Option::Some(Keycode::Escape), ..} =>
+                    break 'event,
+                _ => continue
             }
         }
 

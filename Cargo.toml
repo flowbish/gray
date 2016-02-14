@@ -8,3 +8,4 @@ include = ["data/*"]
 sdl2 = "0.13.0"
 sdl2_image = "1.0.0"
 rand = "0.3.14"
+image = "*"
