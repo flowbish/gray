@@ -1,6 +1,7 @@
 extern crate rand;
 
 use std::ops::IndexMut;
+use std::cmp::max;
 
 type Flt = f64;
 type Flt2 = (Flt, Flt);
@@ -91,6 +92,10 @@ impl<'a> RaytraceState<'a> {
         self.blit(data);
     }
 
+    fn max_ray_length(&self) -> u32 {
+        2 * max(self.size.0, self.size.1)
+    }
+
     fn raytrace_single(&mut self, weight: Flt) {
         let mut pos = PARAMS.origin;
         let mut dir = {
@@ -99,7 +104,7 @@ impl<'a> RaytraceState<'a> {
         };
         let mut num_refracts = 0;
         let mut old_value = -1.0;
-        for _ in 0..1000 {
+        for _ in 0..self.max_ray_length() {
             let floor_pos = (pos.0.floor() as i32, pos.1.floor() as i32);
             if let Some(ipos) = validate_bounds(floor_pos, self.size) {
                 if self.refract(&mut dir, &mut old_value, ipos) {
@@ -210,6 +215,7 @@ impl<'a> RaytraceState<'a> {
             data[i * 4 + 0] = buf_to_pix(v.0);
             data[i * 4 + 1] = buf_to_pix(v.1);
             data[i * 4 + 2] = buf_to_pix(v.2);
+            data[i * 4 + 3] = 255;
         }
     }
 }
