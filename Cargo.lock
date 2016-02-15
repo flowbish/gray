@@ -4,6 +4,7 @@ version = "0.1.0"
 dependencies = [
  "image 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
+ "scoped_threadpool 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "sdl2 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sdl2_image 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -131,6 +132,22 @@ version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "rustc_version"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "semver 0.1.20 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "scoped_threadpool"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "rustc_version 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "sdl2"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -160,4 +177,9 @@ dependencies = [
  "sdl2 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sdl2-sys 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "semver"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
